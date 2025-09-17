@@ -214,8 +214,11 @@ namespace io {
     void MessageHandler::assembleDiagnosticArray(
         const std::shared_ptr<Telegram>& telegram)
     {
-        if (last_receiverstatus_.rx_error & (1 << 9))
-            node_->log(log_level::DEBUG, " RX has reported CPU overload!");
+        constexpr uint32_t cpu_overload_mask = (1u << 9);
+        // CPU overload is still reported, but it only downgrades the diagnostics
+        // to a warning unless additional receiver errors are present.
+        if (last_receiverstatus_.rx_error & cpu_overload_mask)
+            node_->log(log_level::WARN, " RX has reported CPU overload!");
 
         if (!settings_->publish_diagnostics)
             return;
@@ -261,9 +264,10 @@ namespace io {
                 break;
             }
         }
-        // If the ReceiverStatus's RxError field is not 0, then at least one error
-        // has been detected.
-        if (last_receiverstatus_.rx_error != static_cast<uint32_t>(0))
+        // If the ReceiverStatus's RxError field contains bits other than the CPU
+        // overload flag (bit 9), then at least one critical error has been detected.
+        if ((last_receiverstatus_.rx_error & ~cpu_overload_mask) !=
+            static_cast<uint32_t>(0))
         {
             gnss_status.level = DiagnosticStatusMsg::ERROR;
         }
@@ -352,8 +356,12 @@ namespace io {
         receiver_status.values[4].key = "CPU load in %";
         receiver_status.values[4].value =
             std::to_string(last_receiverstatus_.cpu_load);
-        if ((last_receiverstatus_.rx_error & (1 << 9)))
+        const uint32_t rx_error_without_cpu =
+            last_receiverstatus_.rx_error & ~cpu_overload_mask;
+        if (rx_error_without_cpu != static_cast<uint32_t>(0))
             receiver_status.level = DiagnosticStatusMsg::ERROR;
+        else if ((last_receiverstatus_.rx_error & cpu_overload_mask) != 0)
+            receiver_status.level = DiagnosticStatusMsg::WARN;
         else if ((last_receiverstatus_.rx_status & (1 << 8)))
             receiver_status.level = DiagnosticStatusMsg::WARN;
         else
